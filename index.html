@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>AllowToken Demo</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 1rem;
+    }
+
+    #walletInfo {
+      border: 1px solid #ccc;
+      padding: 1rem;
+      margin-top: 1rem;
+      display: none;
+    }
+
+    .btn {
+      padding: 0.5rem 1rem;
+      margin: 0.3rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>AllowToken Demo</h1>
+
+  <!-- Статус подключения: "Not connected" или "Connected: 0x..." -->
+  <p>
+    <strong>Connection Status:</strong>
+    <span id="walletStatus">Not connected</span>
+  </p>
+
+  <!-- Кнопка для подключения к MetaMask -->
+  <button id="connectButton" class="btn">Connect Wallet</button>
+
+  <div id="walletInfo">
+    <h3>Your Wallet Info</h3>
+    <p><strong>Address:</strong> <span id="ownerAddress"></span></p>
+    <p><strong>Balance:</strong> <span id="ownerBalance"></span> ATK</p>
+
+    <hr>
+
+    <h3>Approve Spender</h3>
+    <label for="approveAmount">Approve Amount (ATK):</label>
+    <input type="text" id="approveAmount" value="100" />
+    <button id="approveButton" class="btn">Approve</button>
+
+    <hr>
+
+    <h3>Withdraw (transferFrom)</h3>
+    <p>Списать 10 ATK у вашего кошелька и отправить куда-нибудь</p>
+    <button id="withdrawButton" class="btn">Withdraw 10 ATK</button>
+  </div>
+
+  <!-- Подключаем ethers.js (версия 5.x для примера) -->
+  <script src="https://cdn.jsdelivr.net/npm/ethers/dist/ethers.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"
+        integrity="sha256-oE58ryLjKPOB8k7Z91zBB7NWePAmOjHTFtewBabzg18="
+        crossorigin="anonymous"></script>
+
+  <script>
+    // ====== Настройки =======
+    // Вставьте реальный адрес контракта AllowToken, задеплоенного в Sepolia
+    const CONTRACT_ADDRESS = "0xABC123...";
+
+    // Spender-адрес (кто будет снимать токены через transferFrom).
+    // Для демонстрации можно указать тот же адрес, что сидит в MetaMask,
+    // но по стандартной логике обычно это либо ваш второй аккаунт, либо смарт-контракт.
+    const SPENDER_ADDRESS = "0xSpender...";
+
+    // ====== ABI (минимально необходимое) =======
+    const ABI = [
+      {
+        "inputs":[{"internalType":"address","name":"_to","type":"address"},
+                  {"internalType":"uint256","name":"_amount","type":"uint256"}],
+        "name":"transfer","outputs":[{"internalType":"bool","name":"success","type":"bool"}],
+        "stateMutability":"nonpayable","type":"function"
+      },
+      {
+        "inputs":[{"internalType":"address","name":"_spender","type":"address"},
+                  {"internalType":"uint256","name":"_amount","type":"uint256"}],
+        "name":"approve","outputs":[{"internalType":"bool","name":"success","type":"bool"}],
+        "stateMutability":"nonpayable","type":"function"
+      },
+      {
+        "inputs":[{"internalType":"address","name":"_from","type":"address"},
+                  {"internalType":"address","name":"_to","type":"address"},
+                  {"internalType":"uint256","name":"_amount","type":"uint256"}],
+        "name":"transferFrom","outputs":[{"internalType":"bool","name":"success","type":"bool"}],
+        "stateMutability":"nonpayable","type":"function"
+      },
+      {
+        "inputs":[{"internalType":"address","name":"","type":"address"}],
+        "name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],
+        "stateMutability":"view","type":"function"
+      }
+    ];
+
+    // ====== Глобальные переменные для web3 ======
+    let provider;
+    let signer;
+    let contract;
+
+    // ====== DOM-элементы ======
+    const walletStatusEl = document.getElementById("walletStatus");
+    const connectButton = document.getElementById("connectButton");
+    const walletInfoDiv = document.getElementById("walletInfo");
+    const ownerAddressSpan = document.getElementById("ownerAddress");
+    const ownerBalanceSpan = document.getElementById("ownerBalance");
+
+    const approveAmountInput = document.getElementById("approveAmount");
+    const approveButton = document.getElementById("approveButton");
+    const withdrawButton = document.getElementById("withdrawButton");
+
+    // Функция для обновления баланса
+    async function updateBalance(address) {
+      if (!contract) return;
+      try {
+        const balance = await contract.balanceOf(address);
+        // decimals = 18 => преобразуем в человеко-читаемый вид
+        const readableBal = ethers.utils.formatUnits(balance, 18);
+        ownerBalanceSpan.textContent = readableBal;
+      } catch (err) {
+        console.error("Ошибка при получении баланса:", err);
+      }
+    }
+
+    // 1) Кнопка "Connect Wallet" => запрашиваем аккаунт у MetaMask
+    connectButton.onclick = async function() {
+      if (typeof window.ethereum !== 'undefined') {
+        try {
+          // Запрос аккаунтов у MetaMask
+          await window.ethereum.request({ method: 'eth_requestAccounts' });
+
+          // Создаём ethers-провайдер из MetaMask
+          provider = new ethers.providers.Web3Provider(window.ethereum);
+
+          // Берём signer (текущий аккаунт)
+          signer = provider.getSigner();
+
+          // Создаём объект контракта
+          contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+
+          // Получаем адрес владельца
+          const ownerAddress = await signer.getAddress();
+
+          // Обновим UI: статус, адрес, баланс
+          walletStatusEl.textContent = "Connected: " + ownerAddress;
+          ownerAddressSpan.textContent = ownerAddress;
+          walletInfoDiv.style.display = "block";
+
+          // Подтянем баланс
+          updateBalance(ownerAddress);
+        } catch (err) {
+          console.error("Ошибка при подключении к MetaMask:", err);
+          alert("Ошибка при подключении. Посмотрите консоль.");
+        }
+      } else {
+        alert("MetaMask не найден. Установите расширение в браузере.");
+      }
+    };
+
+    // 2) Кнопка "Approve"
+    approveButton.onclick = async function() {
+      if (!contract || !signer) {
+        alert("Сначала подключите MetaMask!");
+        return;
+      }
+
+      try {
+        // Берём число (например, "100" ATK) из input
+        const rawAmount = approveAmountInput.value;
+        // Переводим в wei (учитывая decimals = 18)
+        const amount = ethers.utils.parseUnits(rawAmount, 18);
+
+        // Может быть тот же адрес, может быть другой
+        const spender = SPENDER_ADDRESS;
+        const tx = await contract.approve(spender, amount);
+        alert("Approve sent, tx hash: " + tx.hash);
+
+        const receipt = await tx.wait();
+        if (receipt.status === 1) {
+          alert(`Approve подтверждён! (spender: ${spender}, amount: ${rawAmount} ATK)`);
+        } else {
+          alert("Approve - транзакция неуспешна (status=0)");
+        }
+      } catch (err) {
+        console.error(err);
+        alert("Ошибка при approve: " + err.message);
+      }
+    };
+
+    // 3) Кнопка "Withdraw" (transferFrom)
+    withdrawButton.onclick = async function() {
+      if (!contract || !signer) {
+        alert("Сначала подключитесь к MetaMask!");
+        return;
+      }
+      try {
+        // Предположим, снимаем 10 ATK
+        const amount = ethers.utils.parseUnits("10", 18);
+
+        // Допустим, владелец = тот, кто подключился
+        const ownerAddress = await signer.getAddress();
+
+        // Переводим на какой-нибудь адрес (для примера)
+        const toAddress = "0x000000000000000000000000000000000000dEaD";
+
+        // Но кто вызывается как spender?
+        // В данном демо — тот же подключенный аккаунт, которому дали approve.
+        const tx = await contract.transferFrom(
+          ownerAddress,
+          toAddress,
+          amount
+        );
+        alert("transferFrom sent, hash: " + tx.hash);
+
+        const receipt = await tx.wait();
+        if (receipt.status === 1) {
+          alert("Withdraw (transferFrom) успешно!");
+          // Обновим баланс после списания
+          updateBalance(ownerAddress);
+        } else {
+          alert("transferFrom неуспешен (status=0)");
+        }
+      } catch (err) {
+        console.error(err);
+        alert("Ошибка при transferFrom: " + err.message);
+      }
+    };
+  </script>
+
+</body>
+</html>
