@@ -60,3 +60,5 @@ if __name__ == "__main__":
     print("AllowToken deployed at:", tx_receipt.contractAddress)
 
 ## https://docs.etherscan.io/contract-verification/multichain-verification
+
+## Contract Address = 0x3CC7AF107A3F1bE97e6453dd9fbD7F784f7F8085
