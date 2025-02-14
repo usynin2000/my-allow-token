@@ -39,7 +39,8 @@
   <div class="info">
     <p><strong>Status:</strong> <span id="status">Not Connected</span></p>
     <p><strong>Wallet Address:</strong> <span id="walletAddress">-</span></p>
-    <p><strong>Balance (ETH):</strong> <span id="walletBalance">-</span></p>
+    <p><strong>ETH Balance:</strong> <span id="walletBalance">-</span></p>
+    <p><strong>ATK Balance:</strong> <span id="atkBalance">-</span></p>
   </div>
 
   <!-- Подключение библиотеки ethers.js -->
@@ -47,7 +48,7 @@
 
   <!-- Основной скрипт -->
   <script>
-    // Проверяем, загрузился ли ethers.js
+    // Проверяем, что ethers.js загружен
     if (typeof ethers === "undefined") {
       console.error("ethers.js не загружен. Проверьте подключение библиотеки.");
       alert("Ошибка: ethers.js не загружен.");
@@ -60,8 +61,17 @@
     const statusElement = document.getElementById('status');
     const walletAddressElement = document.getElementById('walletAddress');
     const walletBalanceElement = document.getElementById('walletBalance');
+    const atkBalanceElement = document.getElementById('atkBalance');
 
-    // Подключение MetaMask
+    // Адрес вашего контракта ERC-20
+    const ATK_CONTRACT_ADDRESS = "0x3CC7AF107A3F1bE97e6453dd9fbD7F784f7F8085";
+
+    // Минимальный ABI для чтения баланса и decimals
+    const ATK_CONTRACT_ABI = [
+      "function balanceOf(address owner) view returns (uint256)",
+      "function decimals() view returns (uint8)"
+    ];
+
     connectWalletButton.onclick = async function () {
       if (typeof window.ethereum === "undefined") {
         alert("MetaMask не найден. Установите расширение.");
@@ -69,13 +79,13 @@
       }
 
       try {
-        // Запрашиваем аккаунты
+        // Запрашиваем доступ к аккаунту
         await window.ethereum.request({ method: "eth_requestAccounts" });
 
-        // Создаём провайдер
+        // Создаём Web3-провайдер на основе MetaMask
         const provider = new ethers.providers.Web3Provider(window.ethereum);
 
-        // Получаем аккаунт
+        // Получаем "подписанта" (аккаунт)
         const signer = provider.getSigner();
         const address = await signer.getAddress();
 
@@ -83,9 +93,25 @@
         statusElement.textContent = "Connected";
         walletAddressElement.textContent = address;
 
-        // Получаем баланс
+        // Получаем ETH-баланс
         const balance = await provider.getBalance(address);
         walletBalanceElement.textContent = ethers.utils.formatEther(balance) + " ETH";
+
+        // Создаём экземпляр контракта для нашего токена ATK
+        const atkContract = new ethers.Contract(ATK_CONTRACT_ADDRESS, ATK_CONTRACT_ABI, provider);
+
+        // Узнаём, сколько знаков после запятой у нашего токена
+        const decimals = await atkContract.decimals();
+
+        // Получаем баланс ATK для текущего адреса
+        const atkBalanceRaw = await atkContract.balanceOf(address);
+
+        // Переводим из BigNumber и учитываем decimals токена
+        const atkBalance = ethers.utils.formatUnits(atkBalanceRaw, decimals);
+
+        // Отображаем баланс на странице
+        atkBalanceElement.textContent = atkBalance + " ATK";
+
       } catch (error) {
         console.error("Ошибка при подключении:", error);
         statusElement.textContent = "Error: " + error.message;
