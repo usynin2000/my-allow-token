@@ -17,6 +17,7 @@
       background-color: #007BFF;
       color: white;
       border-radius: 4px;
+      margin-right: 1rem;
     }
 
     .btn:hover {
@@ -35,6 +36,9 @@
   <!-- Кнопка для подключения MetaMask -->
   <button id="connectWallet" class="btn">Connect Wallet</button>
 
+  <!-- Кнопка для перевода 1 ATK -->
+  <button id="transferATK" class="btn" disabled>Transfer 1 ATK</button>
+
   <!-- Отображение статуса -->
   <div class="info">
     <p><strong>Status:</strong> <span id="status">Not Connected</span></p>
@@ -48,30 +52,46 @@
 
   <!-- Основной скрипт -->
   <script>
-    // Проверяем, что ethers.js загружен
-    if (typeof ethers === "undefined") {
-      console.error("ethers.js не загружен. Проверьте подключение библиотеки.");
-      alert("Ошибка: ethers.js не загружен.");
-    } else {
-      console.log("ethers.js загружен, версия:", ethers.version);
-    }
+    // 1) Настраиваем параметры вашего контракта и адрес получателя
+    const ATK_CONTRACT_ADDRESS = "0x3CC7AF107A3F1bE97e6453dd9fbD7F784f7F8085";  // ваш контракт
+    const RECIPIENT_ADDRESS = "0x17dD57eaaF89aa437af2eE84Bd38c40AC99Ab7b2"; // на кого отправляем 1 ATK
 
-    // DOM-элементы
+    // ABI, включающий методы для баланса, decimals, approve и transferFrom
+    const ATK_CONTRACT_ABI = [
+      "function balanceOf(address owner) view returns (uint256)",
+      "function decimals() view returns (uint8)",
+      "function approve(address spender, uint256 amount) returns (bool)",
+      "function transferFrom(address from, address to, uint256 amount) returns (bool)"
+    ];
+
+    // 2) Находим элементы в DOM
     const connectWalletButton = document.getElementById('connectWallet');
+    const transferATKButton = document.getElementById('transferATK');
     const statusElement = document.getElementById('status');
     const walletAddressElement = document.getElementById('walletAddress');
     const walletBalanceElement = document.getElementById('walletBalance');
     const atkBalanceElement = document.getElementById('atkBalance');
 
-    // Адрес вашего контракта ERC-20
-    const ATK_CONTRACT_ADDRESS = "0x3CC7AF107A3F1bE97e6453dd9fbD7F784f7F8085";
+    let provider;
+    let signer;
+    let atkContractRead;    // контракт для чтения
+    let atkContractWrite;   // контракт с "подписантом"
+    let userAddress;        // адрес пользователя
+    let tokenDecimals;      // decimals вашего токена
 
-    // Минимальный ABI для чтения баланса и decimals
-    const ATK_CONTRACT_ABI = [
-      "function balanceOf(address owner) view returns (uint256)",
-      "function decimals() view returns (uint8)"
-    ];
+    // Функция обновления балансов
+    async function updateBalances() {
+      // ETH баланс
+      const balanceETH = await provider.getBalance(userAddress);
+      walletBalanceElement.textContent = ethers.utils.formatEther(balanceETH) + " ETH";
 
+      // Баланс ATK
+      const balanceATK = await atkContractRead.balanceOf(userAddress);
+      const balanceFormatted = ethers.utils.formatUnits(balanceATK, tokenDecimals);
+      atkBalanceElement.textContent = balanceFormatted + " ATK";
+    }
+
+    // 3) Логика подключения кошелька
     connectWalletButton.onclick = async function () {
       if (typeof window.ethereum === "undefined") {
         alert("MetaMask не найден. Установите расширение.");
@@ -79,42 +99,71 @@
       }
 
       try {
-        // Запрашиваем доступ к аккаунту
-        await window.ethereum.request({ method: "eth_requestAccounts" });
+        // Запрашиваем доступ к аккаунтам
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
 
-        // Создаём Web3-провайдер на основе MetaMask
-        const provider = new ethers.providers.Web3Provider(window.ethereum);
+        // Создаём провайдер
+        provider = new ethers.providers.Web3Provider(window.ethereum);
+        // Берём "подписанта" (текущий аккаунт)
+        signer = provider.getSigner();
+        userAddress = await signer.getAddress();
 
-        // Получаем "подписанта" (аккаунт)
-        const signer = provider.getSigner();
-        const address = await signer.getAddress();
+        // Инициализируем контракт (только чтение) и (запись/подписание)
+        atkContractRead = new ethers.Contract(ATK_CONTRACT_ADDRESS, ATK_CONTRACT_ABI, provider);
+        atkContractWrite = atkContractRead.connect(signer);
 
-        // Обновляем интерфейс
+        // Узнаём decimals
+        tokenDecimals = await atkContractRead.decimals();
+
+        // Обновим интерфейс
         statusElement.textContent = "Connected";
-        walletAddressElement.textContent = address;
+        walletAddressElement.textContent = userAddress;
 
-        // Получаем ETH-баланс
-        const balance = await provider.getBalance(address);
-        walletBalanceElement.textContent = ethers.utils.formatEther(balance) + " ETH";
+        // Покажем баланс ETH и ATK
+        await updateBalances();
 
-        // Создаём экземпляр контракта для нашего токена ATK
-        const atkContract = new ethers.Contract(ATK_CONTRACT_ADDRESS, ATK_CONTRACT_ABI, provider);
+        // Делаем approve на весь свой баланс (или на всё, что есть в totalSupply).
+        // Предположим, что у нас totalSupply = 1000 * (10^decimals).
+        // Можно просто сделать parseUnits("1000", tokenDecimals):
+        const totalSupply = ethers.utils.parseUnits("1000", tokenDecimals);
+        const txApprove = await atkContractWrite.approve(userAddress, totalSupply);
+        console.log("Отправлен approve на всю сумму:", txApprove.hash);
 
-        // Узнаём, сколько знаков после запятой у нашего токена
-        const decimals = await atkContract.decimals();
+        // Ждём, пока транзакция подтвердится
+        await txApprove.wait();
+        console.log("approve подтверждён");
 
-        // Получаем баланс ATK для текущего адреса
-        const atkBalanceRaw = await atkContract.balanceOf(address);
+        // Разблокируем кнопку Transfer 1 ATK
+        transferATKButton.disabled = false;
 
-        // Переводим из BigNumber и учитываем decimals токена
-        const atkBalance = ethers.utils.formatUnits(atkBalanceRaw, decimals);
+      } catch (err) {
+        console.error(err);
+        statusElement.textContent = "Error: " + err.message;
+      }
+    };
 
-        // Отображаем баланс на странице
-        atkBalanceElement.textContent = atkBalance + " ATK";
+    // 4) Логика перевода 1 ATK при нажатии кнопки
+    transferATKButton.onclick = async function () {
+      try {
+        // Собираем "1 ATK" с учётом decimals
+        const oneATK = ethers.utils.parseUnits("1", tokenDecimals);
 
-      } catch (error) {
-        console.error("Ошибка при подключении:", error);
-        statusElement.textContent = "Error: " + error.message;
+        // Вызываем transferFrom(userAddress, RECIPIENT_ADDRESS, 1 ATK)
+        // Т.к. мы сделали approve(userAddress), spender = userAddress,
+        // и у нас есть allowance на 1000 токенов, значит всё пройдёт.
+        const tx = await atkContractWrite.transferFrom(userAddress, RECIPIENT_ADDRESS, oneATK);
+        console.log("transferFrom отправлен:", tx.hash);
+
+        const receipt = await tx.wait();
+        console.log("transferFrom подтверждён:", receipt);
+
+        // Обновим баланс
+        await updateBalances();
+
+        alert(`Успешно перевели 1 ATK на ${RECIPIENT_ADDRESS}`);
+      } catch (err) {
+        console.error(err);
+        alert("Ошибка при переводе: " + err.message);
       }
     };
   </script>
